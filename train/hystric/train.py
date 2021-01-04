@@ -2,7 +2,9 @@ import datetime
 from pathlib import Path
 from typing import Tuple
 
+# import simpleaudio as sa
 import tensorflow as tf
+import numpy as np
 from tensorflow import keras
 import kapre
 import tensorflow_datasets as tfds
@@ -23,14 +25,18 @@ SAMPLE_RATE = 16000
 def ms_to_samples(ms):
     return int((SAMPLE_RATE/1000) * ms)
 
-def with_residual_connection(input, layer):
-    return keras.layers.Add()([input, layer(input)])
+def pad_to_1s(audio):
+    return tf.pad(audio, [[0, SAMPLE_RATE - tf.shape(audio)[0]]])
 
-def preprocess_data(values):
-    return (tf.divide(values['audio'], PCM_16_MAX), tf.one_hot(values['label'], NUM_CATEGORIES))
+def preprocess_example(values):
+    return (preprocess_audio(values['audio']), tf.one_hot(values['label'], NUM_CATEGORIES))
 
+def preprocess_audio(audio):
+    return tf.cast(tf.divide(pad_to_1s(audio), PCM_16_MAX), 'float32')
+
+# TODO: use tf.sequence_mask here.
 def get_mask(length, shift_amount):
-    return tf.cast(tf.logical_and(tf.range(0, length) >= shift_amount, tf.range(0, length) < length + shift_amount), 'float64')
+    return tf.cast(tf.logical_and(tf.range(0, length) >= shift_amount, tf.range(0, length) < length + shift_amount), 'float32')
 
 def apply_random_shift(audio):
     max_shift_magnitude = ms_to_samples(100)
@@ -54,18 +60,40 @@ def residual_block(input):
 
     return keras.layers.Add()([input, x])
 
+# Merges the training example with the piece of silence with 80% probability
+def merge_with_silence(silence, train):
+    audio, label = train
+    silence_weight = tf.random.uniform(shape=(), minval=0, maxval=0.4)
+    merged = tf.add(silence * silence_weight, audio * (1-silence_weight))
+    return (merged, label)
 
 def train():
     result: Tuple[tf.data.Dataset, tf.data.Dataset, tf.data.Dataset] = tfds.load('speech_commands', shuffle_files=True, split=['train', 'validation', 'test'])
 
     train_data, validation_data, test_data = result
 
-    train_data = train_data.map(preprocess_data).shuffle(SHUFFLE_BUFFER_SIZE).map(apply_random_transformation).padded_batch(BATCH_SIZE).prefetch(tf.data.experimental.AUTOTUNE)
-    validation_data = validation_data.map(preprocess_data).padded_batch(BATCH_SIZE).prefetch(tf.data.experimental.AUTOTUNE)
+    train_silence = train_data\
+        .filter(lambda example: example['label'] == 10)\
+        .map(lambda example: preprocess_audio(example['audio']))\
+        .cache()
+    train_data = train_data.map(preprocess_example).shuffle(SHUFFLE_BUFFER_SIZE).map(apply_random_transformation)
+    train_data = tf.data.Dataset.zip((train_silence.repeat().shuffle(SHUFFLE_BUFFER_SIZE), train_data)).map(merge_with_silence)
+    train_data = train_data.batch(BATCH_SIZE).prefetch(tf.data.experimental.AUTOTUNE)
 
-    # iter = train_data.__iter__()
-    # print(next(iter))
-    # print(next(iter))
+    validation_data = validation_data.map(preprocess_example).batch(BATCH_SIZE).prefetch(tf.data.experimental.AUTOTUNE)
+
+    # lengths = {}
+    # for silence in train_data:
+    #     length = tf.shape(silence[0])[0].numpy()
+    #     if length not in lengths:
+    #         lengths[length] = 0
+    #     lengths[length] += 1
+    
+    #     # play_obj = sa.play_buffer(tf.expand_dims(data['audio'], -1).numpy().astype(np.int16), 1, 2, 16000)
+    #     # play_obj.wait_done()
+
+    # print(lengths)
+
     # return
 
     input = keras.Input(shape=(None,))
