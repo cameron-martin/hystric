@@ -2,19 +2,20 @@ import datetime
 from pathlib import Path
 from typing import Tuple
 
-# import simpleaudio as sa
 import tensorflow as tf
 import numpy as np
 from tensorflow import keras
 import kapre
 import tensorflow_datasets as tfds
 from tensorflow.keras.mixed_precision import experimental as mixed_precision
+from hystric.load import load
+import simpleaudio as sa
 
 physical_devices = tf.config.list_physical_devices("GPU")
 if len(physical_devices) > 0:
     tf.config.experimental.set_memory_growth(physical_devices[0], enable=True)
 
-mixed_precision.set_policy(mixed_precision.Policy('mixed_float16'))
+# mixed_precision.set_policy(mixed_precision.Policy('mixed_float16'))
 
 SHUFFLE_BUFFER_SIZE = 1000
 BATCH_SIZE = 32
@@ -28,14 +29,23 @@ SAMPLE_RATE = 16000
 def ms_to_samples(ms):
     return int((SAMPLE_RATE/1000) * ms)
 
+MFCC_WIDTH=ms_to_samples(25)
+MFCC_HOP=ms_to_samples(10)
+FRAME_WIDTH=8
+FRAME_HOP=3
+
+
 def pad_to_1s(audio):
     return tf.pad(audio, [[0, SAMPLE_RATE - tf.shape(audio)[0]]])
 
-def preprocess_example(values):
-    return (preprocess_audio(values['audio']), tf.one_hot(values['label'], NUM_CATEGORIES))
+def preprocess_example(speech, label):
+    return preprocess_audio(speech), label
 
 def preprocess_audio(audio):
-    return tf.cast(tf.divide(pad_to_1s(audio), PCM_16_MAX), 'float32')
+    '''Convert PCM to normalised floats and chunk audio into frames of correct size to feed to RNN'''
+    frame_length = (FRAME_WIDTH - 1) * MFCC_HOP + MFCC_WIDTH
+    frame_step = MFCC_HOP * FRAME_HOP
+    return tf.signal.frame(tf.cast(audio, 'float32') / PCM_16_MAX, frame_length=frame_length, frame_step=frame_step)
 
 # TODO: use tf.sequence_mask here.
 def get_mask(length, shift_amount):
@@ -73,9 +83,18 @@ def merge_with_silence(silence, train):
     return (merged, label)
 
 def train():
-    result: Tuple[tf.data.Dataset, tf.data.Dataset, tf.data.Dataset] = tfds.load('speech_commands', shuffle_files=True, split=['train', 'validation', 'test'])
+    validation_data, = load(splits=['dev-clean'])
+    validation_data = validation_data.map(preprocess_example)
 
-    train_data, validation_data, test_data = result
+    for audio, label in validation_data:
+        print(audio, label)
+        break
+
+    # result: Tuple[tf.data.Dataset, tf.data.Dataset] = tfds.load('librispeech', shuffle_files=True, split=['train_clean360', 'dev_clean'], as_supervised=True)
+
+    # train_data, validation_data = result
+
+    return
 
     train_silence = train_data\
         .filter(lambda example: example['label'] == 10)\
@@ -99,7 +118,7 @@ def train():
 
     # print(lengths)
 
-    # return
+    return
 
     input = keras.Input(shape=(None,))
 
@@ -107,8 +126,9 @@ def train():
 
     x = keras.layers.Lambda(lambda input: tf.expand_dims(input, -1), input_shape=(None,))(input) # Add channels layer
     x = kapre.STFT(
-        win_length=ms_to_samples(30),
-        hop_length=ms_to_samples(10),
+        n_fft=n_fft,
+        win_length=MFCC_WIDTH,
+        hop_length=MFCC_HOP,
         input_data_format='channels_last',
         output_data_format='channels_last',
         dtype=mixed_precision.Policy('float32'))(x)
