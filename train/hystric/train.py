@@ -9,7 +9,6 @@ import kapre
 import tensorflow_datasets as tfds
 from tensorflow.keras.mixed_precision import experimental as mixed_precision
 from hystric.load import load
-import simpleaudio as sa
 
 physical_devices = tf.config.list_physical_devices("GPU")
 if len(physical_devices) > 0:
@@ -31,21 +30,36 @@ def ms_to_samples(ms):
 
 MFCC_WIDTH=ms_to_samples(25)
 MFCC_HOP=ms_to_samples(10)
-FRAME_WIDTH=8
+FRAME_WIDTH=5
 FRAME_HOP=3
 
+SAMPLES_PER_FRAME = (FRAME_WIDTH - 1) * MFCC_HOP + MFCC_WIDTH
+SAMPLES_PER_HOP = MFCC_HOP * FRAME_HOP
+
+UNITS=64
+LSTM_LAYERS=5
 
 def pad_to_1s(audio):
     return tf.pad(audio, [[0, SAMPLE_RATE - tf.shape(audio)[0]]])
 
 def preprocess_example(speech, label):
-    return preprocess_audio(speech), label
+    return preprocess_audio(speech), preprocess_label(label)
 
 def preprocess_audio(audio):
     '''Convert PCM to normalised floats and chunk audio into frames of correct size to feed to RNN'''
-    frame_length = (FRAME_WIDTH - 1) * MFCC_HOP + MFCC_WIDTH
-    frame_step = MFCC_HOP * FRAME_HOP
-    return tf.signal.frame(tf.cast(audio, 'float32') / PCM_16_MAX, frame_length=frame_length, frame_step=frame_step)
+    return tf.signal.frame(tf.cast(audio, 'float32') / PCM_16_MAX, frame_length=SAMPLES_PER_FRAME, frame_step=SAMPLES_PER_HOP)
+
+alphabet = 'abcdefghijklmnopqrstuvwxyz\' '
+ALPHABET_SIZE = len(alphabet) + 1
+table = tf.lookup.StaticHashTable(
+    tf.lookup.KeyValueTensorInitializer(
+        keys=tf.constant(tf.strings.bytes_split(alphabet)),
+        values=tf.constant(range(1, ALPHABET_SIZE))),
+    default_value=-1)
+
+def preprocess_label(label: tf.Tensor):
+    chars = tf.strings.bytes_split(label)
+    return table.lookup(chars)
 
 # TODO: use tf.sequence_mask here.
 def get_mask(length, shift_amount):
@@ -82,29 +96,37 @@ def merge_with_silence(silence, train):
     merged = tf.add(silence * silence_weight, audio * (1-silence_weight))
     return (merged, label)
 
-def train():
-    validation_data, = load(splits=['dev-clean'])
-    validation_data = validation_data.map(preprocess_example)
+class CTCLoss(tf.keras.losses.Loss):
+    def call(self, y_true, y_pred):
+        return tf.nn.ctc_loss(labels=y_true, logits=y_pred, label_length=tf.math.count_nonzero(y_true, -1), logit_length=tf.repeat(tf.shape(y_pred)[-1], tf.shape(y_pred)[0]), logits_time_major=False)
 
-    for audio, label in validation_data:
-        print(audio, label)
-        break
+def train():
+    validation_data, training_data = load(splits=['dev-clean', 'train-clean-100'])
+
+    validation_data = validation_data.map(preprocess_example)
+    training_data = training_data.map(preprocess_example)
+
+    training_data = training_data.padded_batch(BATCH_SIZE).prefetch(tf.data.experimental.AUTOTUNE)
+    validation_data = validation_data.padded_batch(BATCH_SIZE).prefetch(tf.data.experimental.AUTOTUNE)
+
+    # for audio, label in training_data:
+    #     print(audio, label)
+    #     break
 
     # result: Tuple[tf.data.Dataset, tf.data.Dataset] = tfds.load('librispeech', shuffle_files=True, split=['train_clean360', 'dev_clean'], as_supervised=True)
 
     # train_data, validation_data = result
 
-    return
 
-    train_silence = train_data\
-        .filter(lambda example: example['label'] == 10)\
-        .map(lambda example: preprocess_audio(example['audio']))\
-        .cache()
-    train_data = train_data.map(preprocess_example).shuffle(SHUFFLE_BUFFER_SIZE).map(apply_random_transformation)
-    train_data = tf.data.Dataset.zip((train_silence.repeat().shuffle(SHUFFLE_BUFFER_SIZE), train_data)).map(merge_with_silence)
-    train_data = train_data.batch(BATCH_SIZE).prefetch(tf.data.experimental.AUTOTUNE)
+    # train_silence = train_data\
+    #     .filter(lambda example: example['label'] == 10)\
+    #     .map(lambda example: preprocess_audio(example['audio']))\
+    #     .cache()
+    # train_data = train_data.map(preprocess_example).shuffle(SHUFFLE_BUFFER_SIZE).map(apply_random_transformation)
+    # train_data = tf.data.Dataset.zip((train_silence.repeat().shuffle(SHUFFLE_BUFFER_SIZE), train_data)).map(merge_with_silence)
+    # train_data = train_data.batch(BATCH_SIZE).prefetch(tf.data.experimental.AUTOTUNE)
 
-    validation_data = validation_data.map(preprocess_example).batch(BATCH_SIZE).prefetch(tf.data.experimental.AUTOTUNE)
+    # validation_data = validation_data.map(preprocess_example).batch(BATCH_SIZE).prefetch(tf.data.experimental.AUTOTUNE)
 
     # lengths = {}
     # for silence in train_data:
@@ -118,49 +140,36 @@ def train():
 
     # print(lengths)
 
-    return
 
-    input = keras.Input(shape=(None,))
+    input = keras.Input(shape=(None, SAMPLES_PER_FRAME))
 
     n_fft=2048
 
-    x = keras.layers.Lambda(lambda input: tf.expand_dims(input, -1), input_shape=(None,))(input) # Add channels layer
-    x = kapre.STFT(
-        n_fft=n_fft,
-        win_length=MFCC_WIDTH,
-        hop_length=MFCC_HOP,
-        input_data_format='channels_last',
-        output_data_format='channels_last',
-        dtype=mixed_precision.Policy('float32'))(x)
+    x = tf.keras.layers.Lambda(lambda input: tf.signal.stft(
+        input,
+        fft_length=n_fft,
+        frame_length=MFCC_WIDTH,
+        frame_step=MFCC_HOP), name="stft")(input)
     x = kapre.Magnitude()(x)
-    x = kapre.ApplyFilterbank(
-        type='mel',
-        filterbank_kwargs={
-            'sample_rate': SAMPLE_RATE,
-            'n_freq': n_fft // 2 + 1,
-        },
-        data_format='channels_last',
-        dtype=mixed_precision.Policy('float32'))(x)
-    x = kapre.MagnitudeToDecibel(dtype=mixed_precision.Policy('float32'))(x)
-    x = kapre.signal.LogmelToMFCC(n_mfccs=40, data_format='channels_last', dtype=mixed_precision.Policy('float32'))(x)
+    x = tf.keras.layers.Lambda(lambda input: tf.matmul(input, tf.signal.linear_to_mel_weight_matrix(
+        num_mel_bins=40,
+        num_spectrogram_bins=n_fft // 2 + 1,
+        sample_rate=SAMPLE_RATE,
+        lower_edge_hertz=200,
+        upper_edge_hertz=4000)), name="linear_to_mel")(x)
+    x = tf.keras.layers.Lambda(lambda input: tf.math.log(input + 1e-6), name="magitude_to_db")(x)
+    x = tf.keras.layers.Lambda(lambda input: tf.signal.mfccs_from_log_mel_spectrograms(input), name="mfcc")(x)
     # kapre.composed.get_melspectrogram_layer()
     # x = tf.keras.layers.AveragePooling2D(pool_size=(4, 3), data_format='channels_last')(x)
-    x = tf.keras.layers.Conv2D(NUM_FEATURE_MAPS, 3, activation='relu', padding='same')(x)
-    x = tf.keras.layers.BatchNormalization()(x)
-    x = residual_block(x, dilations=(1, 1))
-    x = residual_block(x, dilations=(1, 2))
-    x = residual_block(x, dilations=(2, 2))
-    x = residual_block(x, dilations=(4, 4))
-    x = residual_block(x, dilations=(4, 8))
-    x = residual_block(x, dilations=(8, 8))
-    x = residual_block(x, dilations=(16, 16))
-    x = ds_conv_block(x, dilation=16)
-    x = tf.keras.layers.GlobalAveragePooling2D()(x)
-    x = tf.keras.layers.Dense(NUM_CATEGORIES, activation='softmax')(x)
+    x = tf.keras.layers.TimeDistributed(tf.keras.layers.Flatten())(x)
+    x = tf.keras.layers.Dense(UNITS, activation='tanh')(x)
+    for _ in range(LSTM_LAYERS):
+        x = tf.keras.layers.LSTM(UNITS, return_sequences=True)(x)
+    x = tf.keras.layers.Dense(ALPHABET_SIZE, activation='softmax')(x)
     model = keras.Model(input, x)
 
     model.compile(
-        optimizer="adam", loss="categorical_crossentropy", metrics=[keras.metrics.CategoricalAccuracy()],
+        optimizer="adam", loss=CTCLoss(), metrics=[],
     )
 
     model.summary()
@@ -181,10 +190,10 @@ def train():
     )
 
     model.fit(
-        train_data,
+        training_data,
         validation_data=validation_data,
         epochs=100,
         callbacks=[model_checkpoint_callback, tensorboard_callback, early_stopping_callback],
     )
-
+    
     model.save("tmp/model.h5")

@@ -12,7 +12,6 @@ pydub = "^0.24.1"
 tensorboard_plugin_profile = "^2.4.0"
 apache_beam = "^2.26.0"
 tfds-nightly = "^4.1.0-alpha.202101050107"
-simpleaudio = "^1.0.4"
 
 [tool.poetry.dev-dependencies]
 pytest = "^4.6"
