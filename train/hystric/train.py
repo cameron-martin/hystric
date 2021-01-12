@@ -17,7 +17,7 @@ if len(physical_devices) > 0:
 # mixed_precision.set_policy(mixed_precision.Policy('mixed_float16'))
 
 SHUFFLE_BUFFER_SIZE = 1000
-BATCH_SIZE = 32
+BATCH_SIZE = 8
 NUM_CATEGORIES = 12
 NUM_FEATURE_MAPS = 64
 CHECKPOINT_FILEPATH = Path("tmp/checkpoint/cp-{epoch:04d}.ckpt")
@@ -37,7 +37,7 @@ SAMPLES_PER_FRAME = (FRAME_WIDTH - 1) * MFCC_HOP + MFCC_WIDTH
 SAMPLES_PER_HOP = MFCC_HOP * FRAME_HOP
 
 UNITS=64
-LSTM_LAYERS=5
+LSTM_LAYERS=3
 
 def pad_to_1s(audio):
     return tf.pad(audio, [[0, SAMPLE_RATE - tf.shape(audio)[0]]])
@@ -58,7 +58,7 @@ table = tf.lookup.StaticHashTable(
     default_value=-1)
 
 def preprocess_label(label: tf.Tensor):
-    chars = tf.strings.bytes_split(label)
+    chars = tf.strings.bytes_split(tf.strings.lower(label))
     return table.lookup(chars)
 
 # TODO: use tf.sequence_mask here.
@@ -100,18 +100,32 @@ class CTCLoss(tf.keras.losses.Loss):
     def call(self, y_true, y_pred):
         return tf.nn.ctc_loss(labels=y_true, logits=y_pred, label_length=tf.math.count_nonzero(y_true, -1), logit_length=tf.repeat(tf.shape(y_pred)[-1], tf.shape(y_pred)[0]), logits_time_major=False)
 
+def CTCEditDistance(beam_width=100):
+    def ctc_edit_distance(y_true, y_pred):
+        sequence_length = tf.repeat(tf.shape(y_pred)[1], tf.shape(y_pred)[0])
+        decoded, log_probability = tf.nn.ctc_beam_search_decoder(tf.transpose(y_pred, (1, 0, 2)), sequence_length=sequence_length, beam_width=beam_width, top_paths=1)
+        decoded = decoded[0]
+        # TODO: Work out why this gets cast to a float
+        y_true_sparse = tf.sparse.from_dense(tf.cast(y_true, 'int64'))
+        is_nonzero = tf.not_equal(y_true_sparse.values, 0)
+        y_true_sparse = tf.sparse.retain(y_true_sparse, is_nonzero)
+        return tf.edit_distance(decoded, y_true_sparse)
+    return ctc_edit_distance
+
 def train():
-    validation_data, training_data = load(splits=['dev-clean', 'train-clean-100'])
+    validation_data, training_data_100, training_data_360 = load(splits=['dev-clean', 'train-clean-100', 'train-clean-360'])
+    training_data = training_data_100.concatenate(training_data_360)
 
     validation_data = validation_data.map(preprocess_example)
     training_data = training_data.map(preprocess_example)
 
-    training_data = training_data.padded_batch(BATCH_SIZE).prefetch(tf.data.experimental.AUTOTUNE)
+    # for audio, label in training_data:
+    #     print(label)
+    #     break
+
+    training_data = training_data.shuffle(SHUFFLE_BUFFER_SIZE).padded_batch(BATCH_SIZE).prefetch(tf.data.experimental.AUTOTUNE)
     validation_data = validation_data.padded_batch(BATCH_SIZE).prefetch(tf.data.experimental.AUTOTUNE)
 
-    # for audio, label in training_data:
-    #     print(audio, label)
-    #     break
 
     # result: Tuple[tf.data.Dataset, tf.data.Dataset] = tfds.load('librispeech', shuffle_files=True, split=['train_clean360', 'dev_clean'], as_supervised=True)
 
@@ -169,7 +183,7 @@ def train():
     model = keras.Model(input, x)
 
     model.compile(
-        optimizer="adam", loss=CTCLoss(), metrics=[],
+        optimizer="adam", loss=CTCLoss(), metrics=[CTCEditDistance(beam_width=100)],
     )
 
     model.summary()
@@ -178,22 +192,25 @@ def train():
     if latest is not None:
         model.load_weights(latest)
 
-    model_checkpoint_callback = keras.callbacks.ModelCheckpoint(
+    callbacks = []
+
+    callbacks.append(keras.callbacks.ModelCheckpoint(
         filepath=str(CHECKPOINT_FILEPATH), save_weights_only=True
-    )
+    ))
 
-    log_dir = "tmp/logs/fit/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-    tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=1, profile_batch='10, 15')
+    if True:
+        log_dir = "tmp/logs/fit/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        callbacks.append(tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=1, profile_batch=0))
 
-    early_stopping_callback = tf.keras.callbacks.EarlyStopping(
+    callbacks.append(tf.keras.callbacks.EarlyStopping(
         monitor="val_loss", patience=4, restore_best_weights=True
-    )
+    ))
 
     model.fit(
         training_data,
         validation_data=validation_data,
         epochs=100,
-        callbacks=[model_checkpoint_callback, tensorboard_callback, early_stopping_callback],
+        callbacks=callbacks,
     )
     
     model.save("tmp/model.h5")
