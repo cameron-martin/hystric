@@ -8,7 +8,8 @@ from tensorflow import keras
 import kapre
 import tensorflow_datasets as tfds
 from tensorflow.keras.mixed_precision import experimental as mixed_precision
-from hystric.load import load
+from hystric.load.librispeech import load_librispeech
+from hystric.load.cmu_dictionary import load_cmu
 
 physical_devices = tf.config.list_physical_devices("GPU")
 if len(physical_devices) > 0:
@@ -36,14 +37,14 @@ FRAME_HOP=3
 SAMPLES_PER_FRAME = (FRAME_WIDTH - 1) * MFCC_HOP + MFCC_WIDTH
 SAMPLES_PER_HOP = MFCC_HOP * FRAME_HOP
 
-UNITS=64
-LSTM_LAYERS=3
+UNITS=128
+LSTM_LAYERS=5
 
 def pad_to_1s(audio):
     return tf.pad(audio, [[0, SAMPLE_RATE - tf.shape(audio)[0]]])
 
-def preprocess_example(speech, label):
-    return preprocess_audio(speech), preprocess_label(label)
+def preprocess_example(speech, label, pronouncing_dictionary_index, pronouncing_dictionary_values):
+    return preprocess_audio(speech), preprocess_label(label, pronouncing_dictionary_index, pronouncing_dictionary_values)
 
 def preprocess_audio(audio):
     '''Convert PCM to normalised floats and chunk audio into frames of correct size to feed to RNN'''
@@ -57,9 +58,9 @@ table = tf.lookup.StaticHashTable(
         values=tf.constant(range(1, ALPHABET_SIZE))),
     default_value=-1)
 
-def preprocess_label(label: tf.Tensor):
-    chars = tf.strings.bytes_split(tf.strings.lower(label))
-    return table.lookup(chars)
+def preprocess_label(label: tf.Tensor, pronouncing_dictionary_index: tf.lookup.StaticHashTable, pronouncing_dictionary_values: tf.RaggedTensor):
+    word_indices = pronouncing_dictionary_index.lookup(tf.strings.split(tf.strings.upper(label)))
+    return tf.gather(pronouncing_dictionary_values, word_indices).merge_dims(0, 1)
 
 # TODO: use tf.sequence_mask here.
 def get_mask(length, shift_amount):
@@ -76,19 +77,6 @@ def apply_random_transformation(audio, label):
     audio = apply_random_shift(audio)
     return (audio, label)
 
-def ds_conv_block(input, dilation):
-    x = tf.keras.layers.DepthwiseConv2D(3, padding='same', dilation_rate=(dilation, dilation))(input)
-    x = tf.keras.layers.BatchNormalization()(x)
-    x = tf.keras.layers.Conv2D(NUM_FEATURE_MAPS, 1, activation='relu')(x)
-    x = tf.keras.layers.BatchNormalization()(x)
-    return x
-
-def residual_block(input, dilations):
-    x = ds_conv_block(input, dilation=dilations[0])
-    x = ds_conv_block(x, dilation=dilations[1])
-
-    return keras.layers.Add()([input, x])
-
 # Merges the training example with the piece of silence with 80% probability
 def merge_with_silence(silence, train):
     audio, label = train
@@ -98,30 +86,65 @@ def merge_with_silence(silence, train):
 
 class CTCLoss(tf.keras.losses.Loss):
     def call(self, y_true, y_pred):
+        tf.print(tf.math.count_nonzero(y_true, -1), summarize=-1, output_stream='file:///project/tmp/print.txt')
         return tf.nn.ctc_loss(labels=y_true, logits=y_pred, label_length=tf.math.count_nonzero(y_true, -1), logit_length=tf.repeat(tf.shape(y_pred)[-1], tf.shape(y_pred)[0]), logits_time_major=False)
 
 def CTCEditDistance(beam_width=100):
     def ctc_edit_distance(y_true, y_pred):
         sequence_length = tf.repeat(tf.shape(y_pred)[1], tf.shape(y_pred)[0])
-        decoded, log_probability = tf.nn.ctc_beam_search_decoder(tf.transpose(y_pred, (1, 0, 2)), sequence_length=sequence_length, beam_width=beam_width, top_paths=1)
+        # Transform blank_index from 0 to num_classes - 1 to make up for failure in API. See https://github.com/tensorflow/tensorflow/issues/42993
+        y_pred_shifted = tf.roll(y_pred, shift=-1, axis=2)
+        decoded, log_probability = tf.nn.ctc_beam_search_decoder(tf.transpose(y_pred_shifted, (1, 0, 2)), sequence_length=sequence_length, beam_width=beam_width, top_paths=1)
         decoded = decoded[0]
+        # This undoes the above shift
+        num_classes = tf.shape(y_pred)[2]
+        decoded = tf.sparse.map_values(lambda value: tf.math.floormod(value + 1, tf.cast(num_classes, 'int64')), decoded)
         # TODO: Work out why this gets cast to a float
         y_true_sparse = tf.sparse.from_dense(tf.cast(y_true, 'int64'))
         is_nonzero = tf.not_equal(y_true_sparse.values, 0)
         y_true_sparse = tf.sparse.retain(y_true_sparse, is_nonzero)
+        tf.print(
+            tf.sparse.to_dense(y_true_sparse),
+            # y_pred,
+            tf.sparse.to_dense(decoded),
+            summarize=-1,
+            output_stream='file:///project/tmp/print.txt',
+            sep='\n\n',
+            end='\n\n\n\n')
         return tf.edit_distance(decoded, y_true_sparse)
     return ctc_edit_distance
 
+
+
 def train():
-    validation_data, training_data_100, training_data_360 = load(splits=['dev-clean', 'train-clean-100', 'train-clean-360'])
+    validation_data, training_data_100, training_data_360 = load_librispeech(splits=['dev-clean', 'train-clean-100', 'train-clean-360'])
     training_data = training_data_100.concatenate(training_data_360)
+    # training_data = training_data.filter(lambda audio, label: tf.shape(audio)[0] < SAMPLE_RATE * 3)
 
-    validation_data = validation_data.map(preprocess_example)
-    training_data = training_data.map(preprocess_example)
+    pronouncing_dictionary, phoneme_mapping = load_cmu()
 
-    # for audio, label in training_data:
-    #     print(label)
+    keys = tf.constant(list(pronouncing_dictionary.keys()))
+    pronouncing_dictionary_index = tf.lookup.StaticHashTable(
+        tf.lookup.KeyValueTensorInitializer(
+            keys=keys,
+            values=tf.range(1, tf.shape(keys) + 1)),
+        default_value=0)
+
+    pronouncing_dictionary_values = tf.ragged.constant([[]] + list(pronouncing_dictionary.values()))
+
+    def _preprocess_example(speech, label):
+        return preprocess_example(speech, label, pronouncing_dictionary_index, pronouncing_dictionary_values)
+
+    validation_data = validation_data.map(_preprocess_example)
+    training_data = training_data.map(_preprocess_example)
+
+    # print(phoneme_mapping)
+
+    # for audio, processed_label, label in training_data:
+    #     print(label, processed_label)
     #     break
+
+    # return
 
     training_data = training_data.shuffle(SHUFFLE_BUFFER_SIZE).padded_batch(BATCH_SIZE).prefetch(tf.data.experimental.AUTOTUNE)
     validation_data = validation_data.padded_batch(BATCH_SIZE).prefetch(tf.data.experimental.AUTOTUNE)
@@ -179,11 +202,11 @@ def train():
     x = tf.keras.layers.Dense(UNITS, activation='tanh')(x)
     for _ in range(LSTM_LAYERS):
         x = tf.keras.layers.LSTM(UNITS, return_sequences=True)(x)
-    x = tf.keras.layers.Dense(ALPHABET_SIZE, activation='softmax')(x)
+    x = tf.keras.layers.TimeDistributed(tf.keras.layers.Dense(ALPHABET_SIZE, activation='softmax'))(x)
     model = keras.Model(input, x)
 
     model.compile(
-        optimizer="adam", loss=CTCLoss(), metrics=[CTCEditDistance(beam_width=100)],
+        optimizer=tf.keras.optimizers.Adam(), loss=CTCLoss(), metrics=[CTCEditDistance(beam_width=100)],
     )
 
     model.summary()

@@ -9,6 +9,7 @@ import itertools
 from pydub import AudioSegment
 from concurrent.futures import ThreadPoolExecutor
 import concurrent.futures
+from .common import get_data_dir
 
 CHUNK_SIZE = 500
 THREAD_COUNT = 12
@@ -32,12 +33,6 @@ _urls = [
     'https://www.openslr.org/resources/12/train-clean-360.tar.gz',
     'https://www.openslr.org/resources/12/train-other-500.tar.gz'
 ]
-
-def get_data_dir():
-    data_dir = os.environ.get('TFDS_DATA_DIR')
-    if data_dir is None:
-        data_dir = '~/tensorflow_datasets'
-    return Path(data_dir)
 
 def download_files(data_dir: Path):
     downloads_dir = data_dir / 'downloads'
@@ -135,7 +130,7 @@ def load_dataset(split_name: str, data_dir: Path):
     files = [str(dir) for dir in (data_dir / 'tfrecords' / split_name).iterdir()]
     return tf.data.TFRecordDataset(files).map(parse_example)
 
-def load(splits: List[str]) -> Tuple[tf.data.TFRecordDataset, ...]:
+def load_librispeech(splits: List[str]) -> Tuple[tf.data.TFRecordDataset, ...]:
     data_dir = get_data_dir() / 'librispeech_custom'
     downloads = download_files(data_dir)
     extract_files(downloads, data_dir)
