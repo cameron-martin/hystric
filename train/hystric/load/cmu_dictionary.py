@@ -26,7 +26,7 @@ def create_phoneme_mapping(data_dir: Path):
             else:
                 mapping[phoneme_symbol] = current_index
                 current_index += 1
-    return mapping
+    return mapping, (current_index - 1)
             
 def create_dictionary(phoneme_mapping: Dict[str, int], data_dir: Path):
     dictionary_path = data_dir / 'cmu-0.7b'
@@ -43,7 +43,7 @@ def create_dictionary(phoneme_mapping: Dict[str, int], data_dir: Path):
 def load_cmu():
     data_dir = get_data_dir() / 'cmu_dictionary'
     download_cmu(data_dir)
-    phoneme_mapping = create_phoneme_mapping(data_dir)
+    phoneme_mapping, alphabet_size = create_phoneme_mapping(data_dir)
     dictionary = create_dictionary(phoneme_mapping, data_dir)
     
-    return dictionary, phoneme_mapping
+    return dictionary, phoneme_mapping, alphabet_size
