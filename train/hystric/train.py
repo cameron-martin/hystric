@@ -17,7 +17,7 @@ if len(physical_devices) > 0:
 # mixed_precision.set_policy(mixed_precision.Policy('mixed_float16'))
 
 SHUFFLE_BUFFER_SIZE = 1000
-BATCH_SIZE = 8
+BATCH_SIZE = 64
 CHECKPOINT_FILEPATH = Path("tmp/checkpoint/cp-{epoch:04d}.ckpt")
 CHECKPOINT_DIR = CHECKPOINT_FILEPATH.parent
 PCM_16_MAX = 2**15
@@ -53,8 +53,8 @@ def train():
     def _preprocess_example(speech, label):
         return preprocess_example(speech, label, pronouncing_dictionary_index, pronouncing_dictionary_values)
 
-    validation_data = validation_data.map(_preprocess_example)
-    training_data = training_data.map(_preprocess_example)
+    validation_data = validation_data.map(_preprocess_example, num_parallel_calls=tf.data.AUTOTUNE, deterministic=False)
+    training_data = training_data.map(_preprocess_example, num_parallel_calls=tf.data.AUTOTUNE, deterministic=False)
 
     training_data = training_data.shuffle(SHUFFLE_BUFFER_SIZE).padded_batch(BATCH_SIZE).prefetch(tf.data.experimental.AUTOTUNE)
     validation_data = validation_data.padded_batch(BATCH_SIZE).prefetch(tf.data.experimental.AUTOTUNE)
