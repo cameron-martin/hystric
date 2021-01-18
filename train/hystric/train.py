@@ -22,6 +22,9 @@ CHECKPOINT_FILEPATH = Path("tmp/checkpoint/cp-{epoch:04d}.ckpt")
 CHECKPOINT_DIR = CHECKPOINT_FILEPATH.parent
 PCM_16_MAX = 2**15
 
+def filter_empty(speech, label):
+    '''Filter empty labels. This is necessary to avoid an infinite relative edit distance'''
+    return tf.not_equal(tf.size(label), 0)
 
 def preprocess_example(speech, label, pronouncing_dictionary_index, pronouncing_dictionary_values):
     return preprocess_audio(speech), preprocess_label(label, pronouncing_dictionary_index, pronouncing_dictionary_values)
@@ -56,8 +59,8 @@ def train():
     validation_data = validation_data.map(_preprocess_example, num_parallel_calls=tf.data.AUTOTUNE, deterministic=False)
     training_data = training_data.map(_preprocess_example, num_parallel_calls=tf.data.AUTOTUNE, deterministic=False)
 
-    training_data = training_data.shuffle(SHUFFLE_BUFFER_SIZE).padded_batch(BATCH_SIZE).prefetch(tf.data.experimental.AUTOTUNE)
-    validation_data = validation_data.padded_batch(BATCH_SIZE).prefetch(tf.data.experimental.AUTOTUNE)
+    training_data = training_data.filter(filter_empty).shuffle(SHUFFLE_BUFFER_SIZE).padded_batch(BATCH_SIZE).prefetch(tf.data.experimental.AUTOTUNE)
+    validation_data = validation_data.padded_batch(BATCH_SIZE).filter(filter_empty).prefetch(tf.data.experimental.AUTOTUNE)
 
     model = create_model(alphabet_size)
     compile_model(model)
@@ -79,7 +82,7 @@ def train():
         callbacks.append(tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=1, profile_batch=0))
 
     callbacks.append(tf.keras.callbacks.EarlyStopping(
-        monitor="val_loss", patience=4, restore_best_weights=True
+        monitor="val_loss", patience=2, restore_best_weights=True
     ))
 
     model.fit(
