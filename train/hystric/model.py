@@ -44,8 +44,8 @@ def CTCEditDistance():
     return ctc_edit_distance
 
 
-def create_model(alphabet_size: int):
-    input = keras.Input(shape=(None, SAMPLES_PER_FRAME))
+def create_model(alphabet_size: int, stateful=False, batch_size=None):
+    input = keras.Input(shape=(None, SAMPLES_PER_FRAME), batch_size=batch_size)
 
     n_fft=2048
 
@@ -68,7 +68,7 @@ def create_model(alphabet_size: int):
     x = keras.layers.TimeDistributed(tf.keras.layers.Flatten())(x)
     x = keras.layers.Dense(UNITS, activation='tanh')(x)
     for _ in range(LSTM_LAYERS):
-        x = keras.layers.LSTM(UNITS, return_sequences=True)(x)
+        x = keras.layers.LSTM(UNITS, return_sequences=True, stateful=stateful)(x)
     x = keras.layers.Dense(alphabet_size + 1)(x)
     return keras.Model(input, x)
 

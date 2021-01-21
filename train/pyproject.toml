@@ -12,12 +12,14 @@ pydub = "^0.24.1"
 tensorboard_plugin_profile = "^2.4.0"
 apache_beam = "^2.26.0"
 tfds-nightly = "^4.1.0-alpha.202101050107"
+pyaudio = "^0.2.11"
 
 [tool.poetry.dev-dependencies]
 pytest = "^4.6"
 
 [tool.poetry.scripts]
 train = "hystric.train:train"
+test_acoustic_model = "hystric.test_acoustic_model:test"
 
 [tool.black]
 line-length = 120

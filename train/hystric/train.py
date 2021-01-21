@@ -3,12 +3,13 @@ from pathlib import Path
 from typing import Tuple
 
 import tensorflow as tf
-import numpy as np
 from tensorflow import keras
 from tensorflow.keras.mixed_precision import experimental as mixed_precision
+
 from hystric.load.librispeech import load_librispeech
 from hystric.load.cmu_dictionary import load_cmu
 from hystric.model import compile_model, create_model, SAMPLES_PER_FRAME, SAMPLES_PER_HOP
+from hystric.preprocessing import pcm16_to_float32
 
 physical_devices = tf.config.list_physical_devices("GPU")
 if len(physical_devices) > 0:
@@ -20,41 +21,38 @@ SHUFFLE_BUFFER_SIZE = 1000
 BATCH_SIZE = 64
 CHECKPOINT_FILEPATH = Path("tmp/checkpoint/cp-{epoch:04d}.ckpt")
 CHECKPOINT_DIR = CHECKPOINT_FILEPATH.parent
-PCM_16_MAX = 2**15
 
 def filter_empty(speech, label):
     '''Filter empty labels. This is necessary to avoid an infinite relative edit distance'''
     return tf.not_equal(tf.size(label), 0)
 
-def preprocess_example(speech, label, pronouncing_dictionary_index, pronouncing_dictionary_values):
-    return preprocess_audio(speech), preprocess_label(label, pronouncing_dictionary_index, pronouncing_dictionary_values)
+def preprocess_example(speech, label, char_table):
+    return preprocess_audio(speech), preprocess_label(label, char_table)
 
 def preprocess_audio(audio):
     '''Convert PCM to normalised floats and chunk audio into frames of correct size to feed to RNN'''
-    return tf.signal.frame(tf.cast(audio, 'float32') / PCM_16_MAX, frame_length=SAMPLES_PER_FRAME, frame_step=SAMPLES_PER_HOP)
+    return tf.signal.frame(pcm16_to_float32(audio), frame_length=SAMPLES_PER_FRAME, frame_step=SAMPLES_PER_HOP)
 
-def preprocess_label(label: tf.Tensor, pronouncing_dictionary_index: tf.lookup.StaticHashTable, pronouncing_dictionary_values: tf.RaggedTensor):
-    word_indices = pronouncing_dictionary_index.lookup(tf.strings.split(tf.strings.upper(label)))
-    return tf.gather(pronouncing_dictionary_values, word_indices).merge_dims(0, 1)
+def preprocess_label(label: tf.Tensor, char_table: tf.lookup.StaticHashTable):
+    return char_table.lookup(tf.strings.bytes_split(tf.strings.upper(label)))
 
+ALPHABET = list('ABCDEFGHIJKLMNOPQRSTUVWXYZ\' ')
 
 def train():
     validation_data, training_data_100, training_data_360 = load_librispeech(splits=['dev-clean', 'train-clean-100', 'train-clean-360'])
     training_data = training_data_100.concatenate(training_data_360)
 
-    pronouncing_dictionary, phoneme_mapping, alphabet_size = load_cmu()
+    # pronouncing_dictionary, phoneme_mapping, alphabet_size = load_cmu()
 
-    keys = tf.constant(list(pronouncing_dictionary.keys()))
-    pronouncing_dictionary_index = tf.lookup.StaticHashTable(
+    keys = tf.constant(ALPHABET)
+    char_table = tf.lookup.StaticHashTable(
         tf.lookup.KeyValueTensorInitializer(
             keys=keys,
             values=tf.range(1, tf.shape(keys) + 1)),
         default_value=0)
 
-    pronouncing_dictionary_values = tf.ragged.constant([[]] + list(pronouncing_dictionary.values()))
-
     def _preprocess_example(speech, label):
-        return preprocess_example(speech, label, pronouncing_dictionary_index, pronouncing_dictionary_values)
+        return preprocess_example(speech, label, char_table)
 
     validation_data = validation_data.map(_preprocess_example, num_parallel_calls=tf.data.AUTOTUNE, deterministic=False)
     training_data = training_data.map(_preprocess_example, num_parallel_calls=tf.data.AUTOTUNE, deterministic=False)
@@ -62,7 +60,7 @@ def train():
     training_data = training_data.filter(filter_empty).shuffle(SHUFFLE_BUFFER_SIZE).padded_batch(BATCH_SIZE).prefetch(tf.data.experimental.AUTOTUNE)
     validation_data = validation_data.padded_batch(BATCH_SIZE).filter(filter_empty).prefetch(tf.data.experimental.AUTOTUNE)
 
-    model = create_model(alphabet_size)
+    model = create_model(len(ALPHABET))
     compile_model(model)
 
     model.summary()
