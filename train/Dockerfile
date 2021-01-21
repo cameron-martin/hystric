@@ -5,7 +5,7 @@ ARG group_id
 
 RUN groupadd -r -g ${group_id} solver && useradd --no-log-init -m -r -u ${user_id} -g solver solver
 
-RUN apt update && apt install -y python3-venv libsndfile-dev ffmpeg
+RUN apt update && apt install -y python3-venv libsndfile-dev ffmpeg portaudio19-dev
 
 USER solver
 
