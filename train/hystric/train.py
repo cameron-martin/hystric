@@ -1,6 +1,8 @@
 import datetime
 from pathlib import Path
-from typing import Tuple
+from typing import List, Tuple
+import re
+import os
 
 import tensorflow as tf
 from tensorflow import keras
@@ -38,9 +40,12 @@ def preprocess_label(label: tf.Tensor, char_table: tf.lookup.StaticHashTable):
 
 ALPHABET = list('ABCDEFGHIJKLMNOPQRSTUVWXYZ\' ')
 
+def interleave_datasets(datasets: List[tf.data.Dataset]):
+    return tf.data.Dataset.from_tensor_slices(datasets).interleave(tf.identity, num_parallel_calls=tf.data.AUTOTUNE, deterministic=False)
+
 def train():
-    validation_data, training_data_100, training_data_360 = load_librispeech(splits=['dev-clean', 'train-clean-100', 'train-clean-360'])
-    training_data = training_data_100.concatenate(training_data_360)
+    validation_data, training_data_clean_100, training_data_clean_360, training_data_other_500 = load_librispeech(splits=['dev-clean', 'train-clean-100', 'train-clean-360', 'train-other-500'])
+    training_data = interleave_datasets([training_data_clean_100, training_data_clean_360, training_data_other_500])
 
     # pronouncing_dictionary, phoneme_mapping, alphabet_size = load_cmu()
 
@@ -65,9 +70,11 @@ def train():
 
     model.summary()
 
+    initial_epoch = 0
     latest = tf.train.latest_checkpoint(CHECKPOINT_DIR)
     if latest is not None:
         model.load_weights(latest)
+        initial_epoch = int(re.match(r'cp-([0-9]+)\.', os.path.basename(latest)).group(1))
 
     callbacks = []
 
@@ -75,9 +82,8 @@ def train():
         filepath=str(CHECKPOINT_FILEPATH), save_weights_only=True
     ))
 
-    if True:
-        log_dir = "tmp/logs/fit/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-        callbacks.append(tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=1, profile_batch=0))
+    log_dir = "tmp/logs/fit/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    callbacks.append(tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=1, profile_batch=0))
 
     callbacks.append(tf.keras.callbacks.EarlyStopping(
         monitor="val_loss", patience=2, restore_best_weights=True
@@ -88,6 +94,7 @@ def train():
         validation_data=validation_data,
         epochs=100,
         callbacks=callbacks,
+        initial_epoch=initial_epoch
     )
     
     model.save("tmp/model.h5")
