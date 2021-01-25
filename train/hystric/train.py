@@ -9,6 +9,7 @@ from tensorflow import keras
 from tensorflow.keras.mixed_precision import experimental as mixed_precision
 
 from hystric.load.librispeech import load_librispeech
+from hystric.load.common_voice import load_common_voice
 from hystric.load.cmu_dictionary import load_cmu
 from hystric.model import compile_model, create_model, SAMPLES_PER_FRAME, SAMPLES_PER_HOP
 from hystric.preprocessing import pcm16_to_float32
@@ -35,19 +36,33 @@ def preprocess_audio(audio):
     '''Convert PCM to normalised floats and chunk audio into frames of correct size to feed to RNN'''
     return tf.signal.frame(pcm16_to_float32(audio), frame_length=SAMPLES_PER_FRAME, frame_step=SAMPLES_PER_HOP)
 
+def normalise_label(label):
+    label = tf.strings.regex_replace(label, "-", " ")
+    label = tf.strings.regex_replace(label, "[^'a-zA-Z0-9\s]", "")
+    label = tf.strings.regex_replace(label, "\s+", " ")
+    label = tf.strings.upper(label)
+    label = tf.strings.strip(label)
+    label = label + " "
+    return label
+
 def preprocess_label(label: tf.Tensor, char_table: tf.lookup.StaticHashTable):
-    return char_table.lookup(tf.strings.bytes_split(tf.strings.upper(label)))
+    return char_table.lookup(tf.strings.bytes_split(normalise_label(label)))
 
 ALPHABET = list('ABCDEFGHIJKLMNOPQRSTUVWXYZ\' ')
 
 def interleave_datasets(datasets: List[tf.data.Dataset]):
     return tf.data.Dataset.from_tensor_slices(datasets).interleave(tf.identity, num_parallel_calls=tf.data.AUTOTUNE, deterministic=False)
 
-def train():
-    validation_data, training_data_clean_100, training_data_clean_360, training_data_other_500 = load_librispeech(splits=['dev-clean', 'train-clean-100', 'train-clean-360', 'train-other-500'])
-    training_data = interleave_datasets([training_data_clean_100, training_data_clean_360, training_data_other_500])
+def load_datasets():
+    librispeech_validation_data, librispeech_training_data_clean_100, librispeech_training_data_clean_360, librispeech_training_data_other_500 = load_librispeech(splits=['dev-clean', 'train-clean-100', 'train-clean-360', 'train-other-500'])
+    common_voice_training_data = load_common_voice(splits=['train'])
+    
+    training_data = interleave_datasets([librispeech_training_data_clean_100, librispeech_training_data_clean_360, librispeech_training_data_other_500, common_voice_training_data])
 
-    # pronouncing_dictionary, phoneme_mapping, alphabet_size = load_cmu()
+    return training_data, librispeech_validation_data
+
+def train():
+    training_data, validation_data = load_datasets()
 
     keys = tf.constant(ALPHABET)
     char_table = tf.lookup.StaticHashTable(

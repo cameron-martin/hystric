@@ -1,6 +1,6 @@
 from pathlib import Path
 from .common import get_data_dir
-from typing import Dict, List
+from typing import Dict
 import urllib.request
 
 def download_if_not_exists(url: str, target: Path):
