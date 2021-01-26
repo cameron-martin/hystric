@@ -21,7 +21,7 @@ if len(physical_devices) > 0:
 # mixed_precision.set_policy(mixed_precision.Policy('mixed_float16'))
 
 SHUFFLE_BUFFER_SIZE = 1000
-BATCH_SIZE = 64
+BATCH_SIZE = 32
 CHECKPOINT_FILEPATH = Path("tmp/checkpoint/cp-{epoch:04d}.ckpt")
 CHECKPOINT_DIR = CHECKPOINT_FILEPATH.parent
 
@@ -55,7 +55,7 @@ def interleave_datasets(datasets: List[tf.data.Dataset]):
 
 def load_datasets():
     librispeech_validation_data, librispeech_training_data_clean_100, librispeech_training_data_clean_360, librispeech_training_data_other_500 = load_librispeech(splits=['dev-clean', 'train-clean-100', 'train-clean-360', 'train-other-500'])
-    common_voice_training_data = load_common_voice(splits=['train'])
+    common_voice_training_data, = load_common_voice(splits=['train'])
     
     training_data = interleave_datasets([librispeech_training_data_clean_100, librispeech_training_data_clean_360, librispeech_training_data_other_500, common_voice_training_data])
 
@@ -77,8 +77,8 @@ def train():
     validation_data = validation_data.map(_preprocess_example, num_parallel_calls=tf.data.AUTOTUNE, deterministic=False)
     training_data = training_data.map(_preprocess_example, num_parallel_calls=tf.data.AUTOTUNE, deterministic=False)
 
-    training_data = training_data.filter(filter_empty).shuffle(SHUFFLE_BUFFER_SIZE).padded_batch(BATCH_SIZE).prefetch(tf.data.experimental.AUTOTUNE)
-    validation_data = validation_data.padded_batch(BATCH_SIZE).filter(filter_empty).prefetch(tf.data.experimental.AUTOTUNE)
+    training_data = training_data.filter(filter_empty).shuffle(SHUFFLE_BUFFER_SIZE).padded_batch(BATCH_SIZE).prefetch(tf.data.AUTOTUNE)
+    validation_data = validation_data.padded_batch(BATCH_SIZE).filter(filter_empty).prefetch(tf.data.AUTOTUNE)
 
     model = create_model(len(ALPHABET))
     compile_model(model)
