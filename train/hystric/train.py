@@ -1,8 +1,6 @@
 import datetime
 from pathlib import Path
-from typing import List, Tuple
-import re
-import os
+from typing import List
 
 import tensorflow as tf
 from tensorflow import keras
@@ -20,9 +18,9 @@ if len(physical_devices) > 0:
 
 # mixed_precision.set_policy(mixed_precision.Policy('mixed_float16'))
 
-SHUFFLE_BUFFER_SIZE = 1000
+SHUFFLE_BUFFER_SIZE = 5000
 BATCH_SIZE = 32
-CHECKPOINT_FILEPATH = Path("tmp/checkpoint/cp-{epoch:04d}.ckpt")
+CHECKPOINT_FILEPATH = Path("tmp/checkpoint/cp.ckpt")
 CHECKPOINT_DIR = CHECKPOINT_FILEPATH.parent
 
 def filter_empty(speech, label):
@@ -38,8 +36,8 @@ def preprocess_audio(audio):
 
 def normalise_label(label):
     label = tf.strings.regex_replace(label, "-", " ")
-    label = tf.strings.regex_replace(label, "[^'a-zA-Z0-9\s]", "")
-    label = tf.strings.regex_replace(label, "\s+", " ")
+    label = tf.strings.regex_replace(label, "[^'a-zA-Z0-9\\s]", "")
+    label = tf.strings.regex_replace(label, "\\s+", " ")
     label = tf.strings.upper(label)
     label = tf.strings.strip(label)
     label = label + " "
@@ -57,7 +55,8 @@ def load_datasets():
     librispeech_validation_data, librispeech_training_data_clean_100, librispeech_training_data_clean_360, librispeech_training_data_other_500 = load_librispeech(splits=['dev-clean', 'train-clean-100', 'train-clean-360', 'train-other-500'])
     common_voice_training_data, = load_common_voice(splits=['train'])
     
-    training_data = interleave_datasets([librispeech_training_data_clean_100, librispeech_training_data_clean_360, librispeech_training_data_other_500, common_voice_training_data])
+    librispeech_training_data = interleave_datasets([librispeech_training_data_clean_100, librispeech_training_data_clean_360, librispeech_training_data_other_500])
+    training_data = interleave_datasets([librispeech_training_data, common_voice_training_data])
 
     return training_data, librispeech_validation_data
 
@@ -85,16 +84,16 @@ def train():
 
     model.summary()
 
-    initial_epoch = 0
     latest = tf.train.latest_checkpoint(CHECKPOINT_DIR)
     if latest is not None:
         model.load_weights(latest)
-        initial_epoch = int(re.match(r'cp-([0-9]+)\.', os.path.basename(latest)).group(1))
 
     callbacks = []
 
     callbacks.append(keras.callbacks.ModelCheckpoint(
-        filepath=str(CHECKPOINT_FILEPATH), save_weights_only=True
+        filepath=str(CHECKPOINT_FILEPATH),
+        save_weights_only=True,
+        save_freq=1000
     ))
 
     log_dir = "tmp/logs/fit/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -109,7 +108,6 @@ def train():
         validation_data=validation_data,
         epochs=100,
         callbacks=callbacks,
-        initial_epoch=initial_epoch
     )
     
     model.save("tmp/model.h5")

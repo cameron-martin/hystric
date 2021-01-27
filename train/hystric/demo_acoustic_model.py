@@ -6,14 +6,15 @@ from hystric.model import SAMPLE_RATE, create_model, SAMPLES_PER_FRAME, SAMPLES_
 from hystric.preprocessing import pcm16_to_float32
 
 
-CHECKPOINT_FILEPATH = Path("tmp/checkpoint/cp-{epoch:04d}.ckpt")
-CHECKPOINT_DIR = CHECKPOINT_FILEPATH.parent
+CHECKPOINT_DIR = Path("tmp/checkpoint")
 
 ALPHABET = list('ABCDEFGHIJKLMNOPQRSTUVWXYZ\' ')
 
-def test():
+def demo():
     model = create_model(len(ALPHABET), stateful=True, batch_size=1)
-    model.load_weights(tf.train.latest_checkpoint(CHECKPOINT_DIR))
+    latest_checkpoint = tf.train.latest_checkpoint(CHECKPOINT_DIR)
+    print(f"Loading {latest_checkpoint}")
+    model.load_weights(latest_checkpoint)
     model.summary()
 
     p = pyaudio.PyAudio()

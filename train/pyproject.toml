@@ -19,7 +19,7 @@ pytest = "^4.6"
 
 [tool.poetry.scripts]
 train = "hystric.train:train"
-test_acoustic_model = "hystric.test_acoustic_model:test"
+demo_acoustic_model = "hystric.demo_acoustic_model:demo"
 
 [tool.black]
 line-length = 120
