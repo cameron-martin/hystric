@@ -111,4 +111,4 @@ def load_common_voice(splits: List[str]) -> Tuple[tf.data.TFRecordDataset, ...]:
     for split in splits:
         if not (data_dir / 'tfrecords' / split).exists():
             convert_split(split, data_dir)
-    return tuple(map(lambda split_name: load_dataset(split_name, data_dir, shuffle), splits))
+    return tuple(map(lambda split_name: load_dataset(split_name, data_dir), splits))
