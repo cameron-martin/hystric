@@ -3,12 +3,10 @@ import tensorflow as tf
 import pyaudio
 
 from hystric.model import SAMPLE_RATE, create_model, SAMPLES_PER_FRAME, SAMPLES_PER_HOP
-from hystric.preprocessing import pcm16_to_float32
+from hystric.preprocessing import pcm16_to_float32, ALPHABET
 
 
 CHECKPOINT_DIR = Path("tmp/checkpoint")
-
-ALPHABET = list('ABCDEFGHIJKLMNOPQRSTUVWXYZ\' ')
 
 def demo():
     model = create_model(len(ALPHABET), stateful=True, batch_size=1)

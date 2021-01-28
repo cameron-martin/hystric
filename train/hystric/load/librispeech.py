@@ -126,15 +126,18 @@ def parse_example(example_proto):
   audio = tf.io.decode_raw(example['audio'], out_type='int16')
   return audio, example['label']
 
-def load_dataset(split_name: str, data_dir: Path):
+def load_dataset(split_name: str, data_dir: Path, shuffle: bool):
     files = [str(dir) for dir in (data_dir / 'tfrecords' / split_name).iterdir()]
-    return tf.data.TFRecordDataset(files).map(parse_example)
+    if shuffle:
+        return tf.data.Dataset.from_tensor_slices(files).shuffle(1000).interleave(lambda file: tf.data.TFRecordDataset(file).map(parse_example), num_parallel_calls=tf.data.AUTOTUNE)
+    else:
+        return tf.data.TFRecordDataset(files).map(parse_example)
 
-def load_librispeech(splits: List[str]) -> Tuple[tf.data.TFRecordDataset, ...]:
+def load_librispeech(splits: List[str], shuffle=False) -> Tuple[tf.data.TFRecordDataset, ...]:
     data_dir = get_data_dir() / 'librispeech_custom'
     downloads = download_files(data_dir)
     extract_files(downloads, data_dir)
     for split in get_splits(data_dir):
         if not (data_dir / 'tfrecords' / split).exists():
             convert_split(split, data_dir)
-    return tuple(map(lambda split_name: load_dataset(split_name, data_dir), splits))
+    return tuple(map(lambda split_name: load_dataset(split_name, data_dir, shuffle), splits))

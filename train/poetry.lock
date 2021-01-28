@@ -1006,6 +1006,17 @@ version = "2.4.0"
 
 [[package]]
 category = "main"
+description = "TensorFlow IO"
+name = "tensorflow-io"
+optional = false
+python-versions = ">=3.5, <3.9"
+version = "0.17.0"
+
+[package.dependencies]
+tensorflow = ">=2.4.0,<2.5.0"
+
+[[package]]
+category = "main"
 description = "Library and standards for schema and statistics."
 name = "tensorflow-metadata"
 optional = false
@@ -1178,8 +1189,8 @@ docs = ["sphinx", "jaraco.packaging (>=3.2)", "rst.linker (>=1.9)"]
 testing = ["pytest (>=3.5,<3.7.3 || >3.7.3)", "pytest-checkdocs (>=1.2.3)", "pytest-flake8", "pytest-cov", "jaraco.test (>=3.2.0)", "jaraco.itertools", "func-timeout", "pytest-black (>=0.3.7)", "pytest-mypy"]
 
 [metadata]
-content-hash = "128be84d22d2211251b170a10581c94427b9ae1cf59dbaf54bf76e15673d39ed"
-python-versions = "^3.6"
+content-hash = "7bbab06d376c3036a9042648c342bc015286011f17d40cdbde494a970e22c068"
+python-versions = "^3.6, <3.9"
 
 [metadata.files]
 absl-py = [
@@ -1865,6 +1876,17 @@ tensorflow = [
 ]
 tensorflow-estimator = [
     {file = "tensorflow_estimator-2.4.0-py2.py3-none-any.whl", hash = "sha256:5b7b7bf2debe19a8794adacc43e8ba6459daa4efaf54d3302623994a359b17f0"},
+]
+tensorflow-io = [
+    {file = "tensorflow_io-0.17.0-cp36-cp36m-macosx_10_13_x86_64.whl", hash = "sha256:0a18692a076995018d0e3951e5f2a1364978b1c86a2a8c9ae73ec4176a37a2a0"},
+    {file = "tensorflow_io-0.17.0-cp36-cp36m-manylinux2010_x86_64.whl", hash = "sha256:33ff333eb2907d3de8d5c21f2dfee663b1f144d527ff2b195492a2a2d50619ca"},
+    {file = "tensorflow_io-0.17.0-cp36-cp36m-win_amd64.whl", hash = "sha256:e366d7a38871a52ea62ab3ec726531748ac3fc07c97502ecd4d16242477009c5"},
+    {file = "tensorflow_io-0.17.0-cp37-cp37m-macosx_10_13_x86_64.whl", hash = "sha256:ef5364b57b42280c102bd37962648e4f2ceb858463f1ef9d59d3eee8181395e1"},
+    {file = "tensorflow_io-0.17.0-cp37-cp37m-manylinux2010_x86_64.whl", hash = "sha256:94767c841d6fd5543a1f1b864d88deee510972443092f513aa558478cd13c363"},
+    {file = "tensorflow_io-0.17.0-cp37-cp37m-win_amd64.whl", hash = "sha256:f74c08b4277db2b1192a54dee2d020a9a3277f763bec81c15c0e24406948274d"},
+    {file = "tensorflow_io-0.17.0-cp38-cp38-macosx_10_13_x86_64.whl", hash = "sha256:2529c41e52d787d9c6e10d253e958a4f3556ad659bd9e178fae80a5eacee1f6b"},
+    {file = "tensorflow_io-0.17.0-cp38-cp38-manylinux2010_x86_64.whl", hash = "sha256:3e498f6ecf5a0346ca64265ccca34d1db48eea00b14f3f686f944e985c06bfdb"},
+    {file = "tensorflow_io-0.17.0-cp38-cp38-win_amd64.whl", hash = "sha256:a1790d89c38f5c1f8173883eb15524ea7d80ee30fff94e4cb8d23a168c45d465"},
 ]
 tensorflow-metadata = [
     {file = "tensorflow_metadata-0.22.2-py2.py3-none-any.whl", hash = "sha256:f9ffde743dd61f775f35872e79c4eefecbc539a8870e57b20359dc74726f06eb"},
