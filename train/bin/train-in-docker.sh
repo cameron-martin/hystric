@@ -7,8 +7,15 @@ if [ -z "$TFDS_DATA_DIR" ]; then
     exit 1
 fi
 
+COMMAND_NAME=$1
+
+if [ -z "$COMMAND_NAME" ]; then
+    echo "You must specify which command to run"
+    exit 1
+fi
+
 IMAGE_ID_FILE=tmp/docker-image-id
-CONTAINER_ID_FILE=tmp/docker-container-id
+CONTAINER_ID_FILE=tmp/docker-container-id-$COMMAND_NAME
 
 USER_ID=$(id -u $SUDO_USER)
 GROUP_ID=$(id -g $SUDO_USER)
@@ -24,7 +31,7 @@ fi
 IMAGE_ID="$(cat "$IMAGE_ID_FILE")"
 
 if [ ! -f "$CONTAINER_ID_FILE" ]; then
-    docker create -it -u $USER_ID:$GROUP_ID -v $(realpath .):/project -v $TFDS_DATA_DIR:/tensorflow_datasets --workdir /project --gpus all --cidfile "$CONTAINER_ID_FILE" "$IMAGE_ID" ./bin/run-container.sh
+    docker create -it -u $USER_ID:$GROUP_ID -v $(realpath .):/project -v $TFDS_DATA_DIR:/tensorflow_datasets -e TF_GPU_THREAD_MODE=gpu_private --workdir /project --gpus all --cidfile "$CONTAINER_ID_FILE" "$IMAGE_ID" ./bin/run-container.sh $COMMAND_NAME
     chown $USER_ID:$GROUP_ID "$CONTAINER_ID_FILE"
 fi
 
