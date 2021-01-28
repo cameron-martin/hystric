@@ -23,9 +23,9 @@ def load_datasets():
     common_voice_validation_data, = load_common_voice(splits=['dev'])
 
     return {
-        'librispeech_clean': librispeech_validation_data_clean,
-        'librispeech_other': librispeech_validation_data_other,
-        'common_voice': common_voice_validation_data.map(resample_48khz),
+        'librispeech_clean': librispeech_validation_data_clean.flat_map(tf.identity),
+        'librispeech_other': librispeech_validation_data_other.flat_map(tf.identity),
+        'common_voice': common_voice_validation_data.flat_map(tf.identity).map(resample_48khz),
     }
 
 def evaluate():
@@ -33,7 +33,7 @@ def evaluate():
 
     model = create_model(len(ALPHABET))
 
-    model.compile(loss=CTCLoss(), metrics=[CTCEditDistance()])
+    model.compile(loss=CTCLoss(), metrics=[CTCEditDistance(), CTCEditDistance(beams=128)])
 
     model.summary()
 

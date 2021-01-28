@@ -23,15 +23,14 @@ BATCH_SIZE = 64
 CHECKPOINT_FILEPATH = Path("tmp/checkpoint/cp.ckpt")
 CHECKPOINT_DIR = CHECKPOINT_FILEPATH.parent
 
-def interleave_datasets(datasets: List[tf.data.Dataset]):
-    return tf.data.Dataset.from_tensor_slices(datasets).interleave(tf.identity, num_parallel_calls=tf.data.AUTOTUNE, deterministic=False)
-
 def load_datasets():
-    librispeech_validation_data, librispeech_training_data_clean_100, librispeech_training_data_clean_360, librispeech_training_data_other_500 = load_librispeech(splits=['dev-clean', 'train-clean-100', 'train-clean-360', 'train-other-500'], shuffle=True)
-    common_voice_training_data, = load_common_voice(splits=['train'], shuffle=True)
+    librispeech_validation_data, librispeech_training_data_clean_100, librispeech_training_data_clean_360, librispeech_training_data_other_500 = load_librispeech(splits=['dev-clean', 'train-clean-100', 'train-clean-360', 'train-other-500'])
+    common_voice_training_data, = load_common_voice(splits=['train'])
     
-    librispeech_training_data = interleave_datasets([librispeech_training_data_clean_100, librispeech_training_data_clean_360, librispeech_training_data_other_500])
-    training_data = interleave_datasets([librispeech_training_data, common_voice_training_data.map(resample_48khz)])
+    training_datasets = [librispeech_training_data_clean_100, librispeech_training_data_clean_360, librispeech_training_data_other_500, common_voice_training_data.map(lambda shard: shard.map(resample_48khz))]
+    training_data = tf.data.Dataset.from_tensor_slices(training_datasets).interleave(tf.identity).shuffle(1000).interleave(tf.identity, num_parallel_calls=tf.data.AUTOTUNE, deterministic=False).shuffle(SHUFFLE_BUFFER_SIZE)
+
+    librispeech_validation_data = librispeech_validation_data.flat_map(tf.identity)
 
     return training_data, librispeech_validation_data
 
@@ -41,7 +40,7 @@ def train():
     validation_data = validation_data.map(preprocess_example, num_parallel_calls=tf.data.AUTOTUNE, deterministic=False)
     training_data = training_data.map(preprocess_example, num_parallel_calls=tf.data.AUTOTUNE, deterministic=False)
 
-    training_data = training_data.filter(filter_empty).shuffle(SHUFFLE_BUFFER_SIZE).padded_batch(BATCH_SIZE, padded_shapes=([None, SAMPLES_PER_FRAME], [None])).prefetch(tf.data.AUTOTUNE)
+    training_data = training_data.filter(filter_empty).padded_batch(BATCH_SIZE, padded_shapes=([None, SAMPLES_PER_FRAME], [None])).prefetch(tf.data.AUTOTUNE)
     validation_data = validation_data.padded_batch(BATCH_SIZE, padded_shapes=([None, SAMPLES_PER_FRAME], [None])).filter(filter_empty).prefetch(tf.data.AUTOTUNE)
 
     model = create_model(len(ALPHABET))
